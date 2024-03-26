@@ -24,19 +24,20 @@ rows_with_null = dt.select([ sum(col(colname).isNull().cast('int')).alias(colnam
 rows_with_null.show()
 
 # %%
-# Cast 'streams' to be 
+# Cast 'streams' to be float
 dt = dt.withColumn('streams', col('streams').cast('float'))
 
 # %%
 # Drop other platform columns and all rows where the key is null
-other_platforms = ['in_apple_playlists',
-                   'in_apple_charts',
-                   'in_deezer_playlists',
-                   'in_deezer_charts',
-                   'in_shazam_charts'
-                   ]
+other_platforms_coulumns = [
+    'in_apple_playlists',
+    'in_apple_charts',
+    'in_deezer_playlists',
+    'in_deezer_charts',
+    'in_shazam_charts'
+    ]
 
-dt = dt.drop(*other_platforms)
+dt = dt.drop(*other_platforms_coulumns)
 dt = dt.na.drop(subset = ['key'])
 
 # %%
@@ -53,6 +54,7 @@ for old_name, new_name in columns_to_rename.items():
     dt = dt.withColumnRenamed(old_name, new_name)
 
 # %%
+# Formatted released columns into a single date type column
 dt = dt.withColumn(
     'released_date',
         to_date(concat(
