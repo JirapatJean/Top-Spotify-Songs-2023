@@ -1,31 +1,54 @@
 #%%
 from pyspark.sql import SparkSession
-from pyspark.sql.functions import col, sum, concat, lit, to_date
+from pyspark.sql.functions import col, sum, concat, lit, to_date, round, trim
 
+# %%
 spark = SparkSession.builder.master("local[*]").getOrCreate()
 
 file_path = '../data/spotify-2023.csv'
 
-dt = spark.read.csv(file_path, header = True, inferSchema = True)
+df = spark.read.csv(file_path, header = True, inferSchema = True)
 
 # %%
 # Data Profiling
 
-dt.printSchema()
-print('Row:', dt.count())
-print('Distinct row:', dt.distinct().count())
-print('Column:', len(dt.columns))
+df.printSchema()
+print('Row:', df.count())
+print('Column:', len(df.columns))
 
 # %%
-dt.summary().show()
+df_cleaned = df.dropDuplicates()
+df_cleaned.summary().show()
 
 # %%
-rows_with_null = dt.select([ sum(col(colname).isNull().cast('int')).alias(colname) for colname in dt.columns ])
-rows_with_null.show()
+df_cleaned.where(df_cleaned['streams'].rlike("[^0-9]")).count()
+
+# %%
+rows_with_dirty_streams = df_cleaned.filter(df_cleaned['streams'].rlike("[^0-9]"))
+df_cleaned = df_cleaned.subtract(rows_with_dirty_streams)
 
 # %%
 # Cast 'streams' to be float
-dt = dt.withColumn('streams', col('streams').cast('float'))
+df_cleaned = df_cleaned.withColumn('streams', col('streams').cast('float'))
+
+# %%
+df_cleaned = df_cleaned.withColumn(
+    'streams_in_millions',
+    round(col('streams') / 1000000, 2)
+)
+df_cleaned = df_cleaned.drop('streams')
+
+# %%
+df_cleaned = df_cleaned.filter(col('streams_in_millions') != 0)
+
+# %%
+df_cleaned = df_cleaned.withColumn("track_name", trim(df_cleaned['track_name']))
+df_cleaned = df_cleaned.withColumn("artist(s)_name", trim(df_cleaned['artist(s)_name']))
+
+
+# %%
+rows_with_null = df_cleaned.select([ sum(col(colname).isNull().cast('int')).alias(colname) for colname in df_cleaned.columns ])
+rows_with_null.show()
 
 # %%
 # Drop other platform columns and all rows where the key is null
@@ -37,8 +60,8 @@ other_platforms_coulumns = [
     'in_shazam_charts'
     ]
 
-dt = dt.drop(*other_platforms_coulumns)
-dt = dt.na.drop(subset = ['key'])
+df_cleaned = df_cleaned.drop(*other_platforms_coulumns)
+df_cleaned = df_cleaned.na.drop(subset = ['key'])
 
 # %%
 columns_to_rename = {
@@ -51,11 +74,11 @@ columns_to_rename = {
     'speechiness_%': 'speechiness'
 }
 for old_name, new_name in columns_to_rename.items():
-    dt = dt.withColumnRenamed(old_name, new_name)
+    df_cleaned = df_cleaned.withColumnRenamed(old_name, new_name)
 
 # %%
 # Formatted released columns into a single date type column
-dt = dt.withColumn(
+df_cleaned = df_cleaned.withColumn(
     'released_date',
         to_date(concat(
             'released_year', lit('-'), \
@@ -63,20 +86,24 @@ dt = dt.withColumn(
             'released_day'
         ), 'yyyy-M-d')
 )
-dt = dt.drop('released_year', 'released_month', 'released_day')
-
-# %%
-dt.printSchema()
+df_cleaned = df_cleaned.drop('released_year', 'released_month', 'released_day')
 
 # %%
 # Dealing with key and mode
 # According to 'Pitch class', there are 12 possibles key
 # Mode can be Major and Minor
 key_list = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B']
-dt.filter(~dt.key.isin(key_list)).show()
+df_cleaned.filter(~df.key.isin(key_list)).show()
 
 # %%
-dt.filter(~dt.mode.isin(['Major', 'Minor'])).show()
+df_cleaned.filter(~df.mode.isin(['Major', 'Minor'])).show()
+
+# %%
+# Validate that audio features information columns are between 0 - 100
+audio_feature_columns = ['danceability', 'valence', 'energy', 'acousticness', 'instrumentalness', 'liveness', 'speechiness']
+
+for feature in audio_feature_columns:
+    filtered_df = df_cleaned.filter(~col(feature).between(0, 100))
 
 # %%
 # EDA - Exploratory Data Analysis
@@ -84,18 +111,28 @@ import seaborn as sns
 import matplotlib.pyplot as plt
 import pandas as pd
 
-dt_pd = dt.toPandas()
-dt_pd.head()
+df_pd = df_cleaned.toPandas()
+df_pd.head()
 
 # %%
-sns.boxplot(x = dt_pd['streams'])
+df_pd.describe()
+
+# %%
+sns.histplot(df_pd['streams_in_millions'], bins = 250, kde = True, color = 'blue')
+plt.xlabel('Streams in millions')
+plt.ylabel('Frequency')
+plt.show()
+
+# %%
+sns.boxplot(x = df_pd['streams_in_millions'])
+plt.show()
 
 # %%
 columns_to_plot = ['bpm', 'danceability', 'valence', 'energy', 'acousticness', 'instrumentalness', 'liveness', 'speechiness']
 
 for i, column in enumerate(columns_to_plot, 1):
     plt.subplot(3, 3, i)
-    sns.histplot(data=dt_pd, x = column, bins=20, color='blue')
+    sns.histplot(data = df_pd, x = column, bins = 20, color = 'blue')
     plt.xlabel(column, fontsize = 12)
     plt.ylabel("Score", fontsize = 12)
 
@@ -105,7 +142,7 @@ plt.show()
 # %%
 for i, column in enumerate(columns_to_plot, 1):
     plt.subplot(4, 2, i)
-    sns.scatterplot(data = dt_pd, x = dt_pd.streams, y = dt_pd[column])
+    sns.scatterplot(data = df_pd, x = df_pd.streams_in_millions, y = df_pd[column])
     plt.xlabel("Streams", fontsize = 12)
     plt.ylabel(column, fontsize = 12)
 
@@ -114,5 +151,7 @@ plt.show()
 
 # %%
 # Save to CSV
-dt.coalesce(1).write.csv('../data/cleaned_spotify_songs', header = True)
+df_pd.to_csv('../data/cleaned_spotify_songs.csv', index = False)
 
+# %%
+spark.stop()
