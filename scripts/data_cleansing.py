@@ -1,6 +1,6 @@
 #%%
 from pyspark.sql import SparkSession
-from pyspark.sql.functions import col, sum, concat, lit, to_date, round, trim
+from pyspark.sql.functions import col, sum, concat, lit, to_date, round, trim, split, when, size
 
 # %%
 spark = SparkSession.builder.master("local[*]").getOrCreate()
@@ -104,6 +104,15 @@ audio_feature_columns = ['danceability', 'valence', 'energy', 'acousticness', 'i
 
 for feature in audio_feature_columns:
     filtered_df = df_cleaned.filter(~col(feature).between(0, 100))
+
+# %%
+# Split artists column
+df_cleaned = df_cleaned.withColumn('artists', split(df_cleaned['artist(s)_name'], ',', 2))
+df_cleaned = df_cleaned.withColumn('main_artist', df_cleaned['artists'][0])
+df_cleaned = df_cleaned.withColumn('featuring_artists',
+                                   when(size(df_cleaned['artists']) > 1, df_cleaned['artists'][1])
+                                   .otherwise('-'))
+df_cleaned = df_cleaned.drop('artist(s)_name', 'artists')
 
 # %%
 # EDA - Exploratory Data Analysis
