@@ -23,9 +23,3 @@ def download_blob(bucket_name, source_blob_name, destination_file_name):
             source_blob_name, bucket_name, destination_file_name
         )
     )
-
-download_blob(
-    'asia-southeast1-top-spotify-787969f2-bucket',
-    'dags/airflow_monitoring.py',
-    'monitoring.py'
-)
