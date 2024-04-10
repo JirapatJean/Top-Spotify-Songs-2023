@@ -1,6 +1,5 @@
 import os
 from datetime import timedelta
-from google.cloud.storage import Client
 from airflow import DAG
 from airflow.operators.empty import EmptyOperator
 from airflow.utils.dates import days_ago
@@ -30,6 +29,8 @@ CLUSTER_GENERATOR_CONFIG = ClusterGenerator(
     master_machine_type = 'n2-standard-2',
     worker_machine_type = 'n2-standard-2',
     num_workers = 2,
+    init_actions_uris = ['gs://dataproc-initialization-actions/connectors/connectors.sh'],
+    metadata = {'spark-bigquery-connector-version':'0.37.0'}
 ).make()
 
 # Airflow DAG default arguments
@@ -59,6 +60,9 @@ with DAG(
         # Airflow: Top spotify Songs 2023
         End-to-end data pipeline for the analysis process of the top Spotify songs in 2023
     """
+    start = EmptyOperator(
+        task_id = 'start'
+    )
 
     # Create cluster with generates cluster config operator
     create_dataproc_cluster = DataprocCreateClusterOperator(
@@ -72,8 +76,8 @@ with DAG(
     # PySpark task
     pyspark_task_data_cleaning = DataprocSubmitJobOperator(
         task_id = 'pyspark_task_data_cleaning', 
-        job = PYSPARK_JOB, 
-        region = REGION, 
+        job = PYSPARK_JOB,
+        region = REGION,
         project_id = PROJECT_ID
     )
 
@@ -85,5 +89,9 @@ with DAG(
         region = REGION
     )
 
+    end = EmptyOperator(
+        task_id = 'end'
+    )
+
 # Set task dependencies
-create_dataproc_cluster >> pyspark_task_data_cleaning >> delete_cluster
+start >> create_dataproc_cluster >> pyspark_task_data_cleaning >> delete_cluster >> end
