@@ -1,10 +1,17 @@
-from airflow.models import DAG
-from airflow.operators.python import PythonOperator
-from airflow.operators.bash import BaseOperator
+from airflow.models import DAG, Variable
+from airflow.operators.empty import EmptyOperator
+# from airflow.operators.python import PythonOperator
+from airflow.operators.bash import BashOperator
 from airflow.utils.dates import days_ago
 from datetime import timedelta
+import os
 
-from scripts import upload_dataset_to_storage
+DAGS_FOLDER = os.environ['DAGS_FOLDER']
+dataset = 'nelgiriyewithana/top-spotify-songs-2023'
+dataset_save_path = '/home/airflow/gcs/data/spotify_tracks_2023.csv'
+kaggle_api = Variable.get('kaggle', deserialize_json = True)
+
+# from scripts.upload_and_download_dataset import upload_blob, download_blob
 
 default_args = {
     'owner': 'Spotify',
@@ -25,16 +32,19 @@ with DAG(
         # Airflow: Top spotify Songs 2023
         End-to-end data pipeline for the analysis process of the top Spotify songs in 2023
     """
+    # t1 = BashOperator(
+    #     task_id = 'get_kaggle_api',
+    #     bash_command = f'echo {kaggle_api}'
+    # )
 
-    download_spotify_dataset = BaseOperator(
-        task_id = 'download_spotify_dataset',
-        bash_command = 'download_dataset.sh'
+    download_dataset = BashOperator(
+        task_id = 'download_dataset',
+        bash_command = f'kaggle datasets download -d {dataset} --unzip -o -p {dataset_save_path}'
+    )
+    
+    end = EmptyOperator(
+        task_id = 'end'
     )
 
-    upload_to_storage = PythonOperator(
-        task_id = 'upload_to_storage',
-        python_callable = upload_dataset_to_storage,
-        op_kwargs={'bucket_name': bucket_name, 'source_file_name': source_file_name, 'destination_blob_name': destination_blob_name}
-    )
-
-    download_spotify_dataset.set_downstream(upload_to_storage)
+    # t1 >> end
+    download_dataset >> end
